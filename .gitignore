@@ -20,3 +20,6 @@ checkpoints/
 
 # Environment
 .env
+
+# Node
+node_modules/
