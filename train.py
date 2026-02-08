@@ -1,6 +1,6 @@
 """
 Training script for the Sentiment Transformer.
-Uses a built-in movie review dataset - no downloads needed!
+Uses the IMDB dataset - 50,000 real movie reviews.
 """
 
 import torch
@@ -13,84 +13,9 @@ from pathlib import Path
 from model import SentimentTransformer, count_parameters
 
 
-# Simple movie review dataset (embedded - no external downloads)
-SAMPLE_REVIEWS = [
-    # Positive reviews
-    ("This movie was absolutely fantastic! Great acting and storyline.", 1),
-    ("I loved every minute of this film. Highly recommend!", 1),
-    ("Brilliant performances and beautiful cinematography.", 1),
-    ("One of the best movies I've seen this year. Amazing!", 1),
-    ("Wonderful story with excellent character development.", 1),
-    ("A masterpiece of modern cinema. Truly outstanding.", 1),
-    ("Incredibly entertaining from start to finish.", 1),
-    ("The acting was superb and the plot kept me engaged.", 1),
-    ("A delightful film that exceeded my expectations.", 1),
-    ("Phenomenal movie with great emotional depth.", 1),
-    ("Loved the humor and the heartwarming moments.", 1),
-    ("An absolute joy to watch. Perfect entertainment.", 1),
-    ("The director did an amazing job with this one.", 1),
-    ("Captivating story and memorable characters.", 1),
-    ("A feel-good movie that leaves you smiling.", 1),
-    ("Excellent film with a powerful message.", 1),
-    ("The chemistry between the actors was incredible.", 1),
-    ("A must-see movie for everyone.", 1),
-    ("Thoroughly enjoyed this cinematic experience.", 1),
-    ("Beautiful storytelling and stunning visuals.", 1),
-    # Negative reviews
-    ("This movie was terrible. Complete waste of time.", 0),
-    ("I couldn't even finish watching it. So boring.", 0),
-    ("Awful acting and a predictable plot.", 0),
-    ("One of the worst films I've ever seen.", 0),
-    ("Disappointing and poorly executed.", 0),
-    ("The storyline made no sense whatsoever.", 0),
-    ("Boring, dull, and completely forgettable.", 0),
-    ("I want my two hours back. Terrible movie.", 0),
-    ("The acting was wooden and unconvincing.", 0),
-    ("A complete disaster from beginning to end.", 0),
-    ("Such a letdown. Had high hopes but was disappointed.", 0),
-    ("Poorly written script with bad dialogue.", 0),
-    ("The pacing was awful and the ending was weak.", 0),
-    ("Not worth watching. Save your money.", 0),
-    ("Cringeworthy performances throughout.", 0),
-    ("A mess of a movie with no redeeming qualities.", 0),
-    ("Felt like the longest movie ever. So tedious.", 0),
-    ("The plot holes were impossible to ignore.", 0),
-    ("Uninspired and derivative. Nothing new here.", 0),
-    ("I regret watching this. Truly awful.", 0),
-]
-
-# Data augmentation - create more training examples
-def augment_data(reviews, multiplier=10):
-    """Simple augmentation by word shuffling and synonym-ish replacements"""
-    augmented = list(reviews)
-
-    positive_words = ["great", "amazing", "excellent", "wonderful", "fantastic", "brilliant", "superb", "outstanding"]
-    negative_words = ["terrible", "awful", "horrible", "bad", "poor", "disappointing", "boring", "worst"]
-
-    for text, label in reviews:
-        for _ in range(multiplier):
-            words = text.split()
-            # Random word dropout
-            if len(words) > 5:
-                idx = random.randint(0, len(words) - 1)
-                words.pop(idx)
-
-            # Occasionally swap sentiment words
-            if random.random() > 0.7:
-                word_list = positive_words if label == 1 else negative_words
-                for i, w in enumerate(words):
-                    if w.lower() in positive_words + negative_words:
-                        words[i] = random.choice(word_list)
-                        break
-
-            augmented.append((" ".join(words), label))
-
-    return augmented
-
-
 class SimpleTokenizer:
     """Basic word-level tokenizer"""
-    def __init__(self, vocab_size=5000):
+    def __init__(self, vocab_size=20000):
         self.vocab_size = vocab_size
         self.word2idx = {"<PAD>": 0, "<UNK>": 1}
         self.idx2word = {0: "<PAD>", 1: "<UNK>"}
@@ -116,7 +41,7 @@ class SimpleTokenizer:
         text = re.sub(r'[^\w\s]', '', text)
         return text.split()
 
-    def encode(self, text, max_len=64):
+    def encode(self, text, max_len=256):
         """Convert text to token IDs"""
         words = self._tokenize(text)
         ids = [self.word2idx.get(w, self.unk_idx) for w in words]
@@ -154,7 +79,7 @@ class SimpleTokenizer:
 
 class SentimentDataset(Dataset):
     """PyTorch Dataset for sentiment classification"""
-    def __init__(self, texts, labels, tokenizer, max_len=64):
+    def __init__(self, texts, labels, tokenizer, max_len=256):
         self.texts = texts
         self.labels = labels
         self.tokenizer = tokenizer
@@ -226,36 +151,38 @@ def evaluate(model, dataloader, criterion, device):
 
 
 def main():
-    # Configuration
-    EPOCHS = 30
-    BATCH_SIZE = 32
+    random.seed(42)
+    torch.manual_seed(42)
+
+    # Configuration - scaled up for real data
+    EPOCHS = 10
+    BATCH_SIZE = 64
     LEARNING_RATE = 3e-4
-    MAX_SEQ_LEN = 64
-    D_MODEL = 128
-    N_HEADS = 4
-    N_LAYERS = 3
+    MAX_SEQ_LEN = 256
+    D_MODEL = 256
+    N_HEADS = 8
+    N_LAYERS = 4
+    VOCAB_SIZE = 20000
 
     device = torch.device("cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu")
     print(f"Using device: {device}")
 
-    # Prepare data
-    print("Preparing dataset...")
-    data = augment_data(SAMPLE_REVIEWS, multiplier=15)
-    random.shuffle(data)
+    # Load IMDB dataset
+    print("Loading IMDB dataset (50,000 reviews)...")
+    from datasets import load_dataset
+    dataset = load_dataset("imdb")
 
-    texts = [t for t, _ in data]
-    labels = [l for _, l in data]
-
-    # Split data
-    split_idx = int(len(texts) * 0.8)
-    train_texts, val_texts = texts[:split_idx], texts[split_idx:]
-    train_labels, val_labels = labels[:split_idx], labels[split_idx:]
+    train_texts = dataset["train"]["text"]
+    train_labels = dataset["train"]["label"]
+    val_texts = dataset["test"]["text"]
+    val_labels = dataset["test"]["label"]
 
     print(f"Training samples: {len(train_texts)}")
     print(f"Validation samples: {len(val_texts)}")
 
-    # Build tokenizer
-    tokenizer = SimpleTokenizer(vocab_size=2000)
+    # Build tokenizer on training data
+    print("Building vocabulary...")
+    tokenizer = SimpleTokenizer(vocab_size=VOCAB_SIZE)
     tokenizer.fit(train_texts)
     print(f"Vocabulary size: {len(tokenizer.word2idx)}")
 
@@ -263,10 +190,10 @@ def main():
     train_dataset = SentimentDataset(train_texts, train_labels, tokenizer, MAX_SEQ_LEN)
     val_dataset = SentimentDataset(val_texts, val_labels, tokenizer, MAX_SEQ_LEN)
 
-    train_loader = DataLoader(train_dataset, batch_size=BATCH_SIZE, shuffle=True)
-    val_loader = DataLoader(val_dataset, batch_size=BATCH_SIZE)
+    train_loader = DataLoader(train_dataset, batch_size=BATCH_SIZE, shuffle=True, num_workers=4, pin_memory=True)
+    val_loader = DataLoader(val_dataset, batch_size=BATCH_SIZE, num_workers=4, pin_memory=True)
 
-    # Create model
+    # Create model - bigger for real data
     model = SentimentTransformer(
         vocab_size=len(tokenizer.word2idx),
         d_model=D_MODEL,
@@ -288,8 +215,8 @@ def main():
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, EPOCHS)
 
     # Training loop
-    print("\nTraining...")
-    print("-" * 50)
+    print("\nTraining on IMDB...")
+    print("-" * 60)
 
     best_val_acc = 0
     for epoch in range(EPOCHS):
@@ -299,23 +226,24 @@ def main():
 
         if val_acc > best_val_acc:
             best_val_acc = val_acc
-            # Save best model
             Path("checkpoints").mkdir(exist_ok=True)
             torch.save(model.state_dict(), "checkpoints/best_model.pt")
             tokenizer.save("checkpoints/tokenizer.pt")
+            marker = " *"
+        else:
+            marker = ""
 
-        if (epoch + 1) % 5 == 0 or epoch == 0:
-            print(f"Epoch {epoch+1:3d} | Train Loss: {train_loss:.4f} | Train Acc: {train_acc:.4f} | Val Loss: {val_loss:.4f} | Val Acc: {val_acc:.4f}")
+        print(f"Epoch {epoch+1:2d}/{EPOCHS} | Train Loss: {train_loss:.4f} | Train Acc: {train_acc:.4f} | Val Loss: {val_loss:.4f} | Val Acc: {val_acc:.4f}{marker}")
 
-    print("-" * 50)
+    print("-" * 60)
     print(f"Best validation accuracy: {best_val_acc:.4f}")
     print(f"\nModel saved to checkpoints/best_model.pt")
     print(f"Tokenizer saved to checkpoints/tokenizer.pt")
 
-    # Test with some examples
-    print("\n" + "=" * 50)
+    # Test with examples
+    print("\n" + "=" * 60)
     print("Testing with new examples:")
-    print("=" * 50)
+    print("=" * 60)
 
     model.load_state_dict(torch.load("checkpoints/best_model.pt", weights_only=True))
     model.eval()
@@ -326,6 +254,11 @@ def main():
         "It was okay, nothing special.",
         "A cinematic triumph with stellar performances!",
         "Boring and predictable from start to finish.",
+        "This movie sucks. Total garbage.",
+        "I loved every minute, truly a masterpiece.",
+        "Meh, I've seen better.",
+        "An incredible journey that moved me to tears.",
+        "What a waste of two hours of my life.",
     ]
 
     with torch.no_grad():
@@ -338,7 +271,7 @@ def main():
 
             sentiment = "POSITIVE" if pred == 1 else "NEGATIVE"
             print(f"\n'{text}'")
-            print(f"  → {sentiment} (confidence: {confidence:.2%})")
+            print(f"  -> {sentiment} (confidence: {confidence:.2%})")
 
 
 if __name__ == "__main__":

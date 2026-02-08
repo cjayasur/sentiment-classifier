@@ -6,6 +6,8 @@ Serves predictions via REST API.
 import torch
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
 from pydantic import BaseModel
 from typing import Optional
 from pathlib import Path
@@ -36,10 +38,10 @@ device = None
 
 # Model configuration (must match training)
 MODEL_CONFIG = {
-    "d_model": 128,
-    "n_heads": 4,
-    "n_layers": 3,
-    "max_seq_len": 64,
+    "d_model": 256,
+    "n_heads": 8,
+    "n_layers": 4,
+    "max_seq_len": 256,
     "n_classes": 2,
     "dropout": 0.1
 }
@@ -244,6 +246,16 @@ async def model_info():
         "total_parameters": sum(p.numel() for p in model.parameters()),
         "device": str(device)
     }
+
+
+# Serve React frontend (must be after API routes)
+frontend_dist = Path(__file__).parent / "frontend" / "dist"
+if frontend_dist.exists():
+    app.mount("/assets", StaticFiles(directory=frontend_dist / "assets"), name="static")
+
+    @app.get("/ui")
+    async def serve_frontend():
+        return FileResponse(frontend_dist / "index.html")
 
 
 if __name__ == "__main__":
